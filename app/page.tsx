@@ -78,6 +78,12 @@ function drawScene(ctx: CanvasRenderingContext2D, w: number, h: number, t: numbe
 
 const fader = (n: number, v: number) => Math.max(.03, .12 - n * .008 + v * .12);
 
+const BAND_RANGES = [
+  { label: "LOW", range: "35–180", min: 35, max: 180, gain: 1.05 },
+  { label: "MID", range: "180–2.5K", min: 180, max: 2500, gain: 1.28 },
+  { label: "HIGH", range: "2K–10K", min: 2000, max: 10000, gain: 2.8 },
+] as const;
+
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -89,6 +95,7 @@ export default function Home() {
   const [deviceId, setDeviceId] = useState("");
   const [active, setActive] = useState(false);
   const [panel, setPanel] = useState(true);
+  const panelBeforeFullscreen = useRef(true);
   const [auto, setAuto] = useState(false);
   const [error, setError] = useState("");
   const [level, setLevel] = useState([0,0,0]);
@@ -117,14 +124,39 @@ export default function Home() {
       if (canvas.width !== w*dpr || canvas.height !== h*dpr) { canvas.width=w*dpr; canvas.height=h*dpr; canvas.style.width=`${w}px`; canvas.style.height=`${h}px`; }
       ctx.setTransform(dpr,0,0,dpr,0,0);
       const analyser = analyserRef.current; const bins = new Uint8Array(analyser?.frequencyBinCount || 1024); analyser?.getByteFrequencyData(bins);
-      const avg=(a:number,b:number)=>{let s=0;for(let i=a;i<b;i++)s+=bins[i]||0;return s/Math.max(1,b-a)/255};
-      const energy=[avg(1,18),avg(18,95),avg(95,380)]; drawScene(ctx,w,h,ms/1000,bins,sceneRef.current,energy);
+      const sampleRate = audioRef.current?.sampleRate || 48000;
+      const hzPerBin = sampleRate / (analyser?.fftSize || 2048);
+      const bandEnergy = ({min,max,gain}:{min:number;max:number;gain:number}) => {
+        const start = Math.max(1, Math.floor(min / hzPerBin));
+        const end = Math.min(bins.length, Math.ceil(max / hzPerBin));
+        let power = 0, peak = 0;
+        for (let i=start;i<end;i++) {
+          const magnitude = (bins[i] || 0) / 255;
+          power += magnitude * magnitude;
+          peak = Math.max(peak, magnitude);
+        }
+        const rms = Math.sqrt(power / Math.max(1, end-start));
+        const transientAware = rms * .68 + peak * .32;
+        return Math.min(1, Math.pow(transientAware, .68) * gain);
+      };
+      const energy=BAND_RANGES.map(bandEnergy); drawScene(ctx,w,h,ms/1000,bins,sceneRef.current,energy);
       if(ms-lastUi>100){setLevel(energy);lastUi=ms;} frame++; raf=requestAnimationFrame(render);
     }; raf=requestAnimationFrame(render); return()=>cancelAnimationFrame(raf);
   }, []);
 
   useEffect(() => { if (!auto) return; const id=setInterval(()=>{ setScene(s=>SCENES[(SCENES.findIndex(x=>x.name===s)+1)%SCENES.length].name); },18000); return()=>clearInterval(id); },[auto]);
-  useEffect(() => { const key=(e:KeyboardEvent)=>{ if(e.key.toLowerCase()==="h")setPanel(p=>!p); if(e.key.toLowerCase()==="f")document.documentElement.requestFullscreen?.(); const n=Number(e.key); if(n>=1&&n<=4)setScene(SCENES[n-1].name); }; addEventListener("keydown",key); return()=>removeEventListener("keydown",key); },[]);
+  const enterFullscreen = useCallback(async () => {
+    panelBeforeFullscreen.current = panel;
+    setPanel(false);
+    try { await document.documentElement.requestFullscreen?.(); } catch { setPanel(panelBeforeFullscreen.current); }
+  }, [panel]);
+
+  useEffect(() => {
+    const fullscreenChange = () => { if (!document.fullscreenElement) setPanel(panelBeforeFullscreen.current); };
+    document.addEventListener("fullscreenchange", fullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", fullscreenChange);
+  }, []);
+  useEffect(() => { const key=(e:KeyboardEvent)=>{ if(e.key.toLowerCase()==="h")setPanel(p=>!p); if(e.key.toLowerCase()==="f")void enterFullscreen(); const n=Number(e.key); if(n>=1&&n<=4)setScene(SCENES[n-1].name); }; addEventListener("keydown",key); return()=>removeEventListener("keydown",key); },[enterFullscreen]);
 
   return <main>
     <canvas ref={canvasRef} aria-hidden="true" />
@@ -137,8 +169,8 @@ export default function Home() {
         <button onClick={connect}>CONNECT SIGNAL <span>↗</span></button><p>Route Ableton’s master output to BlackHole, then select it here.</p>{error&&<p className="error">{error}</p>}
       </div>}
     </section>
-    <div className={`meters ${panel?"":"hidden-ui"}`}>{["LOW","MID","HIGH"].map((x,i)=><div key={x}><span>{x}</span><b><i style={{width:`${Math.max(2,level[i]*100)}%`}}/></b></div>)}</div>
+    <div className={`meters ${panel?"":"hidden-ui"}`}>{BAND_RANGES.map((band,i)=><div key={band.label} title={`${band.min}–${band.max} Hz`}><span>{band.label}<small>{band.range}</small></span><b><i style={{width:`${Math.max(2,level[i]*100)}%`}}/></b></div>)}</div>
     <nav className={panel?"":"hidden-ui"} aria-label="Visual scenes">{SCENES.map(s=><button key={s.name} className={scene===s.name?"active":""} onClick={()=>setScene(s.name)}><em>{s.key}</em><span>{s.name}</span></button>)}</nav>
-    <aside className={panel?"":"hidden-ui"}><button className={auto?"on":""} onClick={()=>setAuto(a=>!a)}>AUTO <i/></button><button onClick={()=>document.documentElement.requestFullscreen?.()}>FULLSCREEN</button><span>H — HIDE UI</span></aside>
+    <aside className={panel?"":"hidden-ui"}><button className={auto?"on":""} onClick={()=>setAuto(a=>!a)}>AUTO <i/></button><button onClick={enterFullscreen}>FULLSCREEN</button><span>F — CLEAN FULLSCREEN · H — HIDE UI</span></aside>
   </main>;
 }
