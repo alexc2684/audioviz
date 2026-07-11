@@ -61,80 +61,15 @@ function drawScene(ctx: CanvasRenderingContext2D, w: number, h: number, t: numbe
     }
     ctx.setTransform(1,0,0,1,0,0);
   } else {
-    const seasonal = (Math.sin(t * .035) + 1) * .5;
-    const forestHue = 132 + seasonal * 48;
-
-    // A slow breathing canopy grows inward from the frame, making the bloom
-    // feel embedded in a living forest rather than suspended in empty space.
-    for (let i = 0; i < 34; i++) {
-      const side = i % 2;
-      const seed = Math.sin(i * 91.73) * 43758.5453;
-      const unit = seed - Math.floor(seed);
-      const y = (i / 33) * h + Math.sin(t * .08 + i) * 18;
-      const x = side ? w - unit * w * .16 : unit * w * .16;
-      const leaf = 18 + (i % 7) * 7 + bass * 24;
-      ctx.save(); ctx.translate(x, y); ctx.rotate((side ? Math.PI : 0) + Math.sin(t * .055 + i * .8) * .28);
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.bezierCurveTo(leaf * .7, -leaf * .65, leaf * 1.7, -leaf * .3, leaf * 2.1, 0); ctx.bezierCurveTo(leaf * 1.7, leaf * .3, leaf * .7, leaf * .65, 0, 0);
-      ctx.fillStyle = `hsla(${forestHue + i % 4 * 12},58%,${20 + mids * 18}%,${.085 + mids * .1})`; ctx.fill();
-      ctx.strokeStyle = `hsla(${forestHue + 22},65%,64%,${.07 + highs * .1})`; ctx.lineWidth = .6; ctx.stroke(); ctx.restore();
+    ctx.translate(cx, cy);
+    for (let i = 0; i < 96; i++) {
+      const a = i / 96 * Math.PI * 2 + t * .025;
+      const f = bins[Math.floor(i / 96 * bins.length * .72)] / 255;
+      const r0 = Math.min(w,h) * .09, r1 = r0 + 35 + f * Math.min(w,h) * .27;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0); ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
+      ctx.strokeStyle = `hsla(${295 + i * .7 + t * 2},82%,70%,${.08 + f * .48})`; ctx.lineWidth = .8 + f * 2; ctx.stroke();
     }
-
-    // Subterranean mycelium responds to the kick and slowly creeps upward.
-    ctx.save(); ctx.globalCompositeOperation = "screen";
-    for (let root = 0; root < 18; root++) {
-      const origin = (root + .5) / 18 * w;
-      ctx.beginPath(); ctx.moveTo(origin, h + 10);
-      for (let step = 1; step <= 12; step++) {
-        const yy = h - step * h * .045;
-        const spread = Math.sin(root * 2.31 + step * 1.7 + t * .07) * (10 + step * 2.4);
-        const pull = (cx - origin) * step / 12 * .13;
-        ctx.lineTo(origin + spread + pull, yy);
-      }
-      ctx.strokeStyle = `hsla(${168 + root * 2 + seasonal * 30},78%,72%,${.06 + bass * .11})`;
-      ctx.lineWidth = .45 + bass * 1.35; ctx.shadowBlur = 8 + bass * 18; ctx.shadowColor = "#76e5c2"; ctx.stroke();
-    }
-    ctx.restore();
-
-    // Two orbiting petal fields make the original spectral bloom dimensional.
-    ctx.save(); ctx.translate(cx, cy);
-    for (let layer = 0; layer < 2; layer++) {
-      const count = layer ? 72 : 96;
-      const spin = t * (layer ? -.018 : .026);
-      for (let i = 0; i < count; i++) {
-        const a = i / count * Math.PI * 2 + spin;
-        const f = bins[Math.floor(i / count * bins.length * (layer ? .58 : .78))] / 255;
-        const breathe = Math.sin(t * .22 + i * .31) * 8;
-        const r0 = Math.min(w,h) * (layer ? .16 : .075) + breathe;
-        const length = (layer ? 22 : 42) + f * Math.min(w,h) * (layer ? .14 : .3) + (layer ? mids : bass) * 24;
-        const width = .018 + f * .035;
-        const x0 = Math.cos(a) * r0, y0 = Math.sin(a) * r0;
-        const tip = r0 + length;
-        ctx.beginPath(); ctx.moveTo(x0, y0);
-        ctx.quadraticCurveTo(Math.cos(a - width) * (r0 + length * .62), Math.sin(a - width) * (r0 + length * .62), Math.cos(a) * tip, Math.sin(a) * tip);
-        ctx.quadraticCurveTo(Math.cos(a + width) * (r0 + length * .62), Math.sin(a + width) * (r0 + length * .62), x0, y0);
-        const petalHue = 286 + i * .72 + seasonal * 74 + layer * 28;
-        ctx.fillStyle = `hsla(${petalHue},82%,66%,${.055 + f * .18})`; ctx.fill();
-        ctx.strokeStyle = `hsla(${petalHue + 24},88%,76%,${.15 + f * .45})`; ctx.lineWidth = .55 + f * 1.4; ctx.stroke();
-      }
-    }
-    const heart = ctx.createRadialGradient(0,0,0,0,0,Math.min(w,h)*.13);
-    heart.addColorStop(0,`hsla(${318 + seasonal * 34},92%,82%,${.32 + bass * .34})`);
-    heart.addColorStop(.22,`hsla(${278 + mids * 35},82%,58%,${.15 + mids * .18})`);
-    heart.addColorStop(1,"rgba(24,5,34,0)"); ctx.fillStyle=heart; ctx.beginPath(); ctx.arc(0,0,Math.min(w,h)*.13,0,Math.PI*2); ctx.fill();
-    ctx.restore();
-
-    // High frequencies release drifting pollen and bioluminescent spores.
-    ctx.save();
-    for (let i = 0; i < 130; i++) {
-      const sx = ((Math.sin(i * 923.17) * 43758.5453) % 1 + 1) % 1;
-      const sy = ((Math.sin(i * 317.91) * 24634.6345) % 1 + 1) % 1;
-      const x = (sx * w + Math.sin(t * (.025 + i % 5 * .003) + i) * (28 + i % 9)) % w;
-      const y = (sy * h - t * (2 + i % 4) + h * 20) % h;
-      const twinkle = Math.max(0, Math.sin(t * .8 + i * 2.7));
-      const radius = .35 + (i % 5) * .18 + highs * (1.4 + twinkle * 2.2);
-      ctx.beginPath(); ctx.arc(x,y,radius,0,Math.PI*2); ctx.fillStyle=`hsla(${92 + i % 5 * 28 + seasonal * 35},88%,78%,${.07 + highs * .3 * twinkle})`; ctx.shadowBlur=8+highs*14; ctx.shadowColor="#bbffd2"; ctx.fill();
-    }
-    ctx.restore();
+    ctx.setTransform(1,0,0,1,0,0);
   }
   ctx.globalCompositeOperation = "source-over"; ctx.shadowBlur = 0;
   ctx.fillStyle = `rgba(255,255,255,${.08 + highs * .14})`;
