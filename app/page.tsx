@@ -21,7 +21,7 @@ const FLOW_FRAGMENT = `#version 300 es
 precision highp float;
 out vec4 fragColor;
 uniform vec2 u_res;
-uniform float u_time,u_bass,u_mid,u_high;
+uniform float u_time,u_flow,u_bass,u_mid,u_high;
 #define TAU 6.28318530718
 float hash21(vec2 p){p=fract(p*vec2(234.34,435.345));p+=dot(p,p+34.23);return fract(p.x*p.y);}
 float noise(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.-2.*f);return mix(mix(hash21(i),hash21(i+vec2(1,0)),u.x),mix(hash21(i+vec2(0,1)),hash21(i+vec2(1)),u.x),u.y);}
@@ -35,7 +35,7 @@ void main(){
   vec2 p=uv*zoom;
   float a=t*.008+.1*sin(t*.031);p=mat2(cos(a),-sin(a),sin(a),cos(a))*p;
   p+=.22*vec2(sin(evo*.9),cos(evo*.7));
-  float flow=t*(.045+.085*u_mid);
+  float flow=u_flow;
   vec2 q=vec2(fbm(p+.1*flow),fbm(p+vec2(5.2,1.3)-.08*flow));
   vec2 r=vec2(fbm(p+(2.+.45*u_bass)*q+vec2(1.7,9.2)+.15*flow),fbm(p+2.*q+vec2(8.3,2.8)-.13*flow));
   float f=fbm(p+2.6*r+.25*u_bass*q);
@@ -201,9 +201,21 @@ export default function Home() {
     const program=gl.createProgram()!;gl.attachShader(program,shader(gl.VERTEX_SHADER,FLOW_VERTEX));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,FLOW_FRAGMENT));gl.linkProgram(program);gl.useProgram(program);
     const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
     const pos=gl.getAttribLocation(program,"a_pos");gl.enableVertexAttribArray(pos);gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
-    const res=gl.getUniformLocation(program,"u_res"),time=gl.getUniformLocation(program,"u_time"),bass=gl.getUniformLocation(program,"u_bass"),mid=gl.getUniformLocation(program,"u_mid"),high=gl.getUniformLocation(program,"u_high");
-    let raf=0;
-    const render=(ms:number)=>{const scale=Math.min(devicePixelRatio,1.5),w=Math.floor(innerWidth*scale),h=Math.floor(innerHeight*scale);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}const visible=sceneRef.current==="Bloom";canvas.style.opacity=visible?"1":"0";if(visible){gl.uniform2f(res,w,h);gl.uniform1f(time,ms/1000);gl.uniform1f(bass,energyRef.current[0]);gl.uniform1f(mid,energyRef.current[1]);gl.uniform1f(high,energyRef.current[2]);gl.drawArrays(gl.TRIANGLES,0,3);}raf=requestAnimationFrame(render);};
+    const res=gl.getUniformLocation(program,"u_res"),time=gl.getUniformLocation(program,"u_time"),flow=gl.getUniformLocation(program,"u_flow"),bass=gl.getUniformLocation(program,"u_bass"),mid=gl.getUniformLocation(program,"u_mid"),high=gl.getUniformLocation(program,"u_high");
+    let raf=0,lastMs=0,flowClock=0,flowSpeed=.045;const eased=[0,0,0];
+    const render=(ms:number)=>{
+      const dt=lastMs?Math.min(.05,(ms-lastMs)/1000):1/60;lastMs=ms;
+      const ease=1-Math.exp(-dt*2.2);
+      for(let i=0;i<3;i++)eased[i]+=(energyRef.current[i]-eased[i])*ease;
+      const targetSpeed=.035+eased[1]*.09+eased[0]*.018;
+      flowSpeed+=(targetSpeed-flowSpeed)*(1-Math.exp(-dt*1.15));
+      flowClock+=dt*flowSpeed;
+      const scale=Math.min(devicePixelRatio,1.5),w=Math.floor(innerWidth*scale),h=Math.floor(innerHeight*scale);
+      if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}
+      const visible=sceneRef.current==="Bloom";canvas.style.opacity=visible?"1":"0";
+      if(visible){gl.uniform2f(res,w,h);gl.uniform1f(time,ms/1000);gl.uniform1f(flow,flowClock);gl.uniform1f(bass,eased[0]);gl.uniform1f(mid,eased[1]);gl.uniform1f(high,eased[2]);gl.drawArrays(gl.TRIANGLES,0,3);}
+      raf=requestAnimationFrame(render);
+    };
     raf=requestAnimationFrame(render);return()=>{cancelAnimationFrame(raf);gl.deleteProgram(program);};
   },[]);
 
