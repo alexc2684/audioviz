@@ -11,6 +11,52 @@ const SCENES: { name: Scene; key: string; note: string }[] = [
   { name: "Bloom", key: "04", note: "spectral garden" },
 ];
 
+const FLOW_VERTEX = `#version 300 es
+in vec2 a_pos;
+void main(){gl_Position=vec4(a_pos,0.,1.);}`;
+
+// Adapted from the domain-warped organic engine in the reference audioviz.
+// It remains a true shader layer; the original 2D Bloom is composited above it.
+const FLOW_FRAGMENT = `#version 300 es
+precision highp float;
+out vec4 fragColor;
+uniform vec2 u_res;
+uniform float u_time,u_bass,u_mid,u_high;
+#define TAU 6.28318530718
+float hash21(vec2 p){p=fract(p*vec2(234.34,435.345));p+=dot(p,p+34.23);return fract(p.x*p.y);}
+float noise(vec2 p){vec2 i=floor(p),f=fract(p);vec2 u=f*f*(3.-2.*f);return mix(mix(hash21(i),hash21(i+vec2(1,0)),u.x),mix(hash21(i+vec2(0,1)),hash21(i+vec2(1)),u.x),u.y);}
+float fbm(vec2 p){float v=0.,a=.5;mat2 r=mat2(.8,.6,-.6,.8);for(int i=0;i<5;i++){v+=a*noise(p);p=r*p*2.03+vec2(1.7,9.2);a*=.5;}return v;}
+vec3 pal(float t,vec3 a,vec3 b,vec3 c,vec3 d){return a+b*cos(TAU*(c*t+d));}
+void main(){
+  vec2 uv=(gl_FragCoord.xy-.5*u_res)/min(u_res.x,u_res.y);
+  float t=u_time;
+  float evo=t*.028;
+  float zoom=2.0+.28*sin(t*.023)-.14*u_bass;
+  vec2 p=uv*zoom;
+  float a=t*.008+.1*sin(t*.031);p=mat2(cos(a),-sin(a),sin(a),cos(a))*p;
+  p+=.22*vec2(sin(evo*.9),cos(evo*.7));
+  float flow=t*(.045+.085*u_mid);
+  vec2 q=vec2(fbm(p+.1*flow),fbm(p+vec2(5.2,1.3)-.08*flow));
+  vec2 r=vec2(fbm(p+(2.+.45*u_bass)*q+vec2(1.7,9.2)+.15*flow),fbm(p+2.*q+vec2(8.3,2.8)-.13*flow));
+  float f=fbm(p+2.6*r+.25*u_bass*q);
+  float ridge=1.-abs(2.*fbm(p*.9+1.5*r+.05*evo)-1.);
+  f=mix(f,f*.55+ridge*.5,(.5+.5*sin(evo*.27+1.7))*.45);
+  float shade=f*f*1.6+.25*q.x+.2*r.y;
+  vec3 col=pal(shade,vec3(.18,.055,.22),vec3(.30,.18,.32),vec3(1.,.9,1.),vec3(.88,.52,.38));
+  float vein=1.-abs(2.*fbm(p*1.4+3.*r)-1.);vein=pow(vein,5.+2.*sin(evo*.19));
+  col+=pal(shade+.35,vec3(.08,.16,.15),vec3(.16,.34,.28),vec3(1.),vec3(.2,.5,.7))*vein*(.26+.9*u_mid);
+  float ca=pow(smoothstep(.55,1.,noise(p*6.+r*4.+vec2(0.,flow*.6))),3.);
+  col+=vec3(.55,.85,.9)*ca*(.08+u_high*1.15);
+  float d=length(uv);col+=vec3(.5,.12,.52)*pow(u_bass,1.4)*smoothstep(.9,0.,d)*.7;
+  vec2 sp=uv*22.;vec2 cell=floor(sp);float star=hash21(cell);float tw=sin(t*(2.+4.*star)+star*40.)*.5+.5;
+  col+=vec3(.9,1.,.85)*smoothstep(.985,1.,star)*tw*smoothstep(.35,0.,length(fract(sp)-.5))*(.08+1.2*u_high);
+  col*=.34+.22*(u_bass+u_mid+u_high)/3.;
+  col*=1.-.58*dot(uv,uv);col+=(hash21(gl_FragCoord.xy+fract(t)*100.)-.5)*.012;
+  col=max(col,0.);col=col/(1.+col*.6);col=pow(col,vec3(.92));
+  float l=dot(col,vec3(.299,.587,.114));col=mix(vec3(l),col,1.15);
+  fragColor=vec4(col,1.);
+}`;
+
 function drawScene(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, bins: Uint8Array, scene: Scene, energy: number[]) {
   const [bass, mids, highs] = energy;
   const cx = w / 2, cy = h / 2;
@@ -19,7 +65,8 @@ function drawScene(ctx: CanvasRenderingContext2D, w: number, h: number, t: numbe
   grad.addColorStop(0, `hsla(${hue + mids * 28},55%,${10 + bass * 8}%,1)`);
   grad.addColorStop(.55, `hsla(${hue - 18},48%,5%,1)`);
   grad.addColorStop(1, "#020305");
-  ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+  if (scene === "Bloom") ctx.clearRect(0, 0, w, h);
+  else { ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h); }
 
   ctx.globalCompositeOperation = "screen";
   if (scene === "Aurora") {
@@ -62,12 +109,13 @@ function drawScene(ctx: CanvasRenderingContext2D, w: number, h: number, t: numbe
     ctx.setTransform(1,0,0,1,0,0);
   } else {
     ctx.translate(cx, cy);
+    ctx.shadowBlur = 14 + highs * 28; ctx.shadowColor = "#ef8fff";
     for (let i = 0; i < 96; i++) {
       const a = i / 96 * Math.PI * 2 + t * .025;
       const f = bins[Math.floor(i / 96 * bins.length * .72)] / 255;
       const r0 = Math.min(w,h) * .09, r1 = r0 + 35 + f * Math.min(w,h) * .27;
       ctx.beginPath(); ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0); ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
-      ctx.strokeStyle = `hsla(${295 + i * .7 + t * 2},82%,70%,${.08 + f * .48})`; ctx.lineWidth = .8 + f * 2; ctx.stroke();
+      ctx.strokeStyle = `hsla(${295 + i * .7 + t * 2},88%,76%,${.2 + f * .56})`; ctx.lineWidth = 1 + f * 2.4; ctx.stroke();
     }
     ctx.setTransform(1,0,0,1,0,0);
   }
@@ -85,12 +133,14 @@ const BAND_RANGES = [
 ] as const;
 
 export default function Home() {
+  const flowCanvasRef = useRef<HTMLCanvasElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
   const [scene, setScene] = useState<Scene>("Aurora");
   const sceneRef = useRef<Scene>(scene);
+  const energyRef = useRef([0,0,0]);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState("");
   const [active, setActive] = useState(false);
@@ -139,10 +189,23 @@ export default function Home() {
         const transientAware = rms * .68 + peak * .32;
         return Math.min(1, Math.pow(transientAware, .68) * gain);
       };
-      const energy=BAND_RANGES.map(bandEnergy); drawScene(ctx,w,h,ms/1000,bins,sceneRef.current,energy);
+      const energy=BAND_RANGES.map(bandEnergy); energyRef.current=energy; drawScene(ctx,w,h,ms/1000,bins,sceneRef.current,energy);
       if(ms-lastUi>100){setLevel(energy);lastUi=ms;} frame++; raf=requestAnimationFrame(render);
     }; raf=requestAnimationFrame(render); return()=>cancelAnimationFrame(raf);
   }, []);
+
+  useEffect(() => {
+    const canvas=flowCanvasRef.current; if(!canvas) return;
+    const gl=canvas.getContext("webgl2",{antialias:false}); if(!gl) return;
+    const shader=(type:number,source:string)=>{const s=gl.createShader(type)!;gl.shaderSource(s,source);gl.compileShader(s);return s;};
+    const program=gl.createProgram()!;gl.attachShader(program,shader(gl.VERTEX_SHADER,FLOW_VERTEX));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,FLOW_FRAGMENT));gl.linkProgram(program);gl.useProgram(program);
+    const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+    const pos=gl.getAttribLocation(program,"a_pos");gl.enableVertexAttribArray(pos);gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+    const res=gl.getUniformLocation(program,"u_res"),time=gl.getUniformLocation(program,"u_time"),bass=gl.getUniformLocation(program,"u_bass"),mid=gl.getUniformLocation(program,"u_mid"),high=gl.getUniformLocation(program,"u_high");
+    let raf=0;
+    const render=(ms:number)=>{const scale=Math.min(devicePixelRatio,1.5),w=Math.floor(innerWidth*scale),h=Math.floor(innerHeight*scale);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}const visible=sceneRef.current==="Bloom";canvas.style.opacity=visible?"1":"0";if(visible){gl.uniform2f(res,w,h);gl.uniform1f(time,ms/1000);gl.uniform1f(bass,energyRef.current[0]);gl.uniform1f(mid,energyRef.current[1]);gl.uniform1f(high,energyRef.current[2]);gl.drawArrays(gl.TRIANGLES,0,3);}raf=requestAnimationFrame(render);};
+    raf=requestAnimationFrame(render);return()=>{cancelAnimationFrame(raf);gl.deleteProgram(program);};
+  },[]);
 
   useEffect(() => { if (!auto) return; const id=setInterval(()=>{ setScene(s=>SCENES[(SCENES.findIndex(x=>x.name===s)+1)%SCENES.length].name); },18000); return()=>clearInterval(id); },[auto]);
   const enterFullscreen = useCallback(async () => {
@@ -159,7 +222,8 @@ export default function Home() {
   useEffect(() => { const key=(e:KeyboardEvent)=>{ if(e.key.toLowerCase()==="h")setPanel(p=>!p); if(e.key.toLowerCase()==="f")void enterFullscreen(); const n=Number(e.key); if(n>=1&&n<=4)setScene(SCENES[n-1].name); }; addEventListener("keydown",key); return()=>removeEventListener("keydown",key); },[enterFullscreen]);
 
   return <main>
-    <canvas ref={canvasRef} aria-hidden="true" />
+    <canvas ref={flowCanvasRef} className="flow-canvas" aria-hidden="true" />
+    <canvas ref={canvasRef} className="scene-canvas" aria-hidden="true" />
     <div className="grain" />
     <header className={panel?"":"hidden-ui"}><div className="brand"><span className="mark">AV</span><span>DEEP / SIGNAL</span></div><div className="status"><i className={active?"live":""}/>{active?"LIVE INPUT":"AWAITING SIGNAL"}</div></header>
     <section className={`hero ${panel?"":"hidden-ui"}`}>
